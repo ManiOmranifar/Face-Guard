@@ -1,4 +1,25 @@
+# face_guard/dialogs.py
 from PyQt5 import QtWidgets, QtCore, QtGui
+import sys
+
+def show_message(parent, title: str, text: str, icon=QtWidgets.QMessageBox.Information):
+    """
+    Small helper to show a message box with readable text regardless of global app stylesheet.
+    Forces label text color to black and uses a white background for clarity.
+    """
+    msg = QtWidgets.QMessageBox(parent)
+    msg.setIcon(icon)
+    msg.setWindowTitle(title)
+    msg.setText(text)
+    # Style only the QLabel and the QMessageBox background so message text is always readable.
+    # This avoids inheriting dark app styles that cause white-on-white text.
+    msg.setStyleSheet(
+        "QMessageBox { background-color: white; }"
+        "QLabel { color: black; font-size: 12px; }"
+        "QPushButton { min-width: 80px; padding: 6px; }"
+    )
+    msg.exec_()
+
 
 class PasswordDialog(QtWidgets.QDialog):
     def __init__(self, prompt='Enter master password:', parent=None):
@@ -23,6 +44,7 @@ class PasswordDialog(QtWidgets.QDialog):
     def get_password(self):
         return self.pw_edit.text().strip()
 
+
 class CreateMasterDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -44,10 +66,11 @@ class CreateMasterDialog(QtWidgets.QDialog):
     def _on_accept(self):
         a = self.pw1.text().strip(); b = self.pw2.text().strip()
         if len(a) < 4:
-            QtWidgets.QMessageBox.warning(self, 'Invalid', 'Password too short (min 4).')
+            # use show_message to ensure readable text
+            show_message(self, 'Invalid', 'Password too short (min 4).', QtWidgets.QMessageBox.Warning)
             return
         if a != b:
-            QtWidgets.QMessageBox.warning(self, 'Invalid', 'Passwords do not match.')
+            show_message(self, 'Invalid', 'Passwords do not match.', QtWidgets.QMessageBox.Warning)
             return
         self._ok = True
         self.accept()
