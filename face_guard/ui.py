@@ -271,7 +271,8 @@ class MainWindow(QtWidgets.QMainWindow):
         # simple overlay widget
         self.overlay = QtWidgets.QWidget()
         self.overlay.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.FramelessWindowHint | QtCore.Qt.Tool)
-        self.overlay.setAttribute(QtCore.Qt.WA_TranslucentBackground, False)
+        self.overlay.setAttribute(QtCore.Qt.WA_TranslucentBackground, True) 
+        self.overlay.setStyleSheet("background-color: rgba(0, 0, 0, 255);")
         self.overlay.hide()
         self._monitoring = False
         self.init_ui()
