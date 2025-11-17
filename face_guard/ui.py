@@ -268,46 +268,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.store = ProfileStore(master_key)
         self.encodings = self.store.load_encodings_all()
         self.camera_worker = CameraWorker(self.encodings, similarity_threshold=SIMILARITY_THRESHOLD)
-
-        # robust overlay widget (top-level, translucent, defensive paint)
-        self.overlay = QtWidgets.QWidget(None)
+        # simple overlay widget
+        self.overlay = QtWidgets.QWidget()
         self.overlay.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.FramelessWindowHint | QtCore.Qt.Tool)
-        # request translucent background (needed for RGBA stylesheet on many platforms)
-        self.overlay.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
-        # use RGBA black semi-transparent; if ignored, paintEvent fallback below will draw black
-        self.overlay.setStyleSheet("background-color: rgba(0, 0, 0, 220);")
-        # add a simple label in center (optional, empty by default)
-        ol_layout = QtWidgets.QVBoxLayout(self.overlay)
-        ol_layout.setContentsMargins(0, 0, 0, 0)
-        ol_layout.setAlignment(QtCore.Qt.AlignCenter)
-        ol_label = QtWidgets.QLabel('')
-        ol_label.setStyleSheet('color: white; font-size: 20px; padding: 20px;')
-        ol_layout.addWidget(ol_label)
+        self.overlay.setAttribute(QtCore.Qt.WA_TranslucentBackground, False)
+        self.overlay.setStyleSheet("background: black;")
         self.overlay.hide()
-
         self._monitoring = False
         self.init_ui()
         self.setup_signals()
         self.apply_styles()
-
-    # Defensive paintEvent fallback: ensure overlay is black even if stylesheet ignored.
-    # Put this function onto the overlay widget instance by monkey-patching a method,
-    # since we're using a plain QWidget created above.
-    def _overlay_paint(self, event):
-        try:
-            p = QtGui.QPainter(self.overlay)
-            color = QtGui.QColor(0, 0, 0, 220)
-            p.fillRect(self.overlay.rect(), color)
-            p.end()
-        except Exception:
-            pass
-
-    # attach fallback paint to the overlay instance
-    # (works because functions are objects; bind method)
-    # Note: this binding is safe and small overhead.
-    # We'll bind after overlay creation in __init__ by setting attribute:
-    # self.overlay.paintEvent = lambda event: self._overlay_paint(event)
-    # (done below in init_ui continuation)
 
     def init_ui(self):
         central = QtWidgets.QWidget()
@@ -398,12 +368,6 @@ class MainWindow(QtWidgets.QMainWindow):
         # populate admin list
         self.refresh_admin_list()
 
-        # bind the defensive paint event to overlay (fallback if stylesheet ignored)
-        try:
-            self.overlay.paintEvent = lambda event: self._overlay_paint(event)
-        except Exception:
-            pass
-
     def apply_styles(self):
         qss = """
         * { color: #e9eef8; font-family: 'Segoe UI', Roboto, Arial; }
@@ -450,19 +414,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.camera_worker.update_encodings(self.encodings)
         self.camera_worker.similarity_threshold = float(self.threshold_spin.value())
         # camera_worker uses QThread methods
-        try:
-            # prefer start_worker if CameraWorker defines it
-            if hasattr(self.camera_worker, "start_worker"):
-                self.camera_worker.start_worker()
-            else:
-                # fallback to start()
-                self.camera_worker.start()
-        except Exception:
-            # try fallback
-            try:
-                self.camera_worker.start()
-            except Exception:
-                pass
+        self.camera_worker.start_worker()
         self.status_chip.setText('Monitoring — looking for admins')
 
     def on_stop(self):
@@ -473,10 +425,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_btn.setEnabled(False)
         self.status_chip.setText('Stopped')
         try:
-            if hasattr(self.camera_worker, "stop_worker"):
-                self.camera_worker.stop_worker()
-            else:
-                self.camera_worker.stop()
+            self.camera_worker.stop_worker()
         except:
             pass
         try:
@@ -571,43 +520,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.status_chip.setText('Unknown person — overlay active')
         if self._monitoring:
             try:
-                # prefer showFullScreen; set geometry to primary screen for better coverage
-                screen = QtWidgets.QApplication.primaryScreen()
-                if screen is not None:
-                    geom = screen.geometry()
-                    self.overlay.setGeometry(geom)
                 self.overlay.showFullScreen()
                 self.overlay.raise_()
             except:
-                try:
-                    self.overlay.show()
-                    self.overlay.raise_()
-                except:
-                    pass
+                pass
 
     def on_no_face(self):
         self.status_chip.setText('No face — overlay active')
         if self._monitoring:
             try:
-                screen = QtWidgets.QApplication.primaryScreen()
-                if screen is not None:
-                    geom = screen.geometry()
-                    self.overlay.setGeometry(geom)
                 self.overlay.showFullScreen()
                 self.overlay.raise_()
             except:
-                try:
-                    self.overlay.show()
-                    self.overlay.raise_()
-                except:
-                    pass
+                pass
 
     def closeEvent(self, event):
         try:
-            if hasattr(self.camera_worker, "stop_worker"):
-                self.camera_worker.stop_worker()
-            else:
-                self.camera_worker.stop()
+            self.camera_worker.stop_worker()
         except:
             pass
         event.accept()
