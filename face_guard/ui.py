@@ -1,14 +1,12 @@
-# face_guard/ui.py
+# face_guard/ui.py -- fixed overlay background (black) and robust overlay show/hide
+
 from PyQt5 import QtWidgets, QtCore, QtGui
 import cv2
 import numpy as np
 import time
 import json
 import base64
-import traceback
-
 import face_recognition
-
 from .storage import ProfileStore
 from .dialogs import PasswordDialog, CreateMasterDialog
 from .camera_worker import CameraWorker
@@ -22,114 +20,18 @@ DEFAULT_CAPTURE_COUNT = 8
 CAPTURE_TIMEOUT = 60
 
 
-# ----------------- Helpers -----------------
+# Helper to show styled message boxes so text is visible on dark/light themes
 def show_message(parent, title: str, text: str, icon=QtWidgets.QMessageBox.Information):
-    """
-    Message box helper that forces a readable style (white background, black text)
-    so messages are visible regardless of the app-wide stylesheet.
-    """
     msg = QtWidgets.QMessageBox(parent)
     msg.setIcon(icon)
     msg.setWindowTitle(title)
     msg.setText(text)
-    msg.setStyleSheet(
-        "QMessageBox { background-color: white; }"
-        "QLabel { color: black; font-size: 12px; }"
-        "QPushButton { min-width: 80px; padding: 6px; }"
-    )
+    # Force label text color to black so it's visible on light backgrounds (and consistent)
+    # Keep only styling for QLabel so other controls aren't impacted.
+    msg.setStyleSheet("QLabel{ color: black; }")
     msg.exec_()
 
 
-# ---------- Overlay window (full-screen black pad) ----------
-class OverlayWindow(QtWidgets.QWidget):
-    """
-    Full-screen black overlay used to block the screen when no face / unknown.
-    Use: overlay.lock() to show, overlay.unlock() to hide.
-    """
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setWindowFlags(
-            QtCore.Qt.WindowStaysOnTopHint
-            | QtCore.Qt.FramelessWindowHint
-            | QtCore.Qt.Tool
-        )
-        # Allow opaque black background
-        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
-        # Fully opaque black background
-        self.setStyleSheet("background-color: rgba(0, 0, 0, 1);")
-        # Prevent mouse events from passing through if you want to block input.
-        # If you prefer clicks to pass to underlying windows, set True.
-        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, False)
-        self.hide()
-
-    def lock(self):
-        """Show full-screen black overlay and raise it above other windows."""
-        try:
-            screen = QtWidgets.QApplication.primaryScreen()
-            if screen is not None:
-                geo = screen.geometry()
-                self.setGeometry(geo)
-            else:
-                # fallback
-                self.showFullScreen()
-            self.show()
-            self.raise_()
-            # ensure painted
-            QtWidgets.QApplication.processEvents()
-        except Exception:
-            # fallback show attempt
-            try:
-                self.showFullScreen()
-                QtWidgets.QApplication.processEvents()
-            except Exception:
-                traceback.print_exc()
-
-    def unlock(self):
-        """Hide overlay."""
-        try:
-            self.hide()
-            QtWidgets.QApplication.processEvents()
-        except Exception:
-            try:
-                self.close()
-            except Exception:
-                pass
-
-
-# ---------- Video preview label ----------
-class VideoLabel(QtWidgets.QLabel):
-    """QLabel extension that always shows a black background if frame missing."""
-    def __init__(self, width=720, height=480, parent=None):
-        super().__init__(parent)
-        self.setFixedSize(width, height)
-        self.setStyleSheet("background-color: black; border-radius:12px;")
-        self.setAlignment(QtCore.Qt.AlignCenter)
-
-    def update_frame(self, frame):
-        """Accepts BGR OpenCV frame or None. Renders a black frame when frame is None."""
-        try:
-            if frame is None:
-                black = np.zeros((self.height(), self.width(), 3), dtype=np.uint8)
-                pix = self._to_pixmap(black)
-            else:
-                # ensure frame fits into preview size while preserving aspect ratio
-                disp = cv2.resize(frame, (self.width(), self.height()))
-                pix = self._to_pixmap(disp)
-            self.setPixmap(pix)
-        except Exception:
-            # if convert fails, set black
-            black = np.zeros((self.height(), self.width(), 3), dtype=np.uint8)
-            self.setPixmap(self._to_pixmap(black))
-
-    def _to_pixmap(self, bgr_frame):
-        rgb = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
-        h, w, ch = rgb.shape
-        bytes_per_line = ch * w
-        qimg = QtGui.QImage(rgb.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
-        return QtGui.QPixmap.fromImage(qimg)
-
-
-# ---------- EnrollDialog ----------
 class EnrollDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -181,8 +83,8 @@ class EnrollDialog(QtWidgets.QDialog):
 
         btns = QtWidgets.QDialogButtonBox(QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel)
         layout.addWidget(btns)
-
         self.setLayout(layout)
+
         btns.accepted.connect(self.accept)
         btns.rejected.connect(self.reject)
         self.capture_btn.clicked.connect(self.start_capture)
@@ -204,7 +106,6 @@ class EnrollDialog(QtWidgets.QDialog):
         imgs = []
         encs = []
         begin = time.time()
-
         try:
             while captured < target and (time.time() - begin) < CAPTURE_TIMEOUT and not self._stop_flag:
                 ret, frame = cap.read()
@@ -212,20 +113,20 @@ class EnrollDialog(QtWidgets.QDialog):
                     time.sleep(0.05)
                     QtWidgets.QApplication.processEvents()
                     continue
-
                 disp = cv2.resize(frame, (720, 405))
                 rgb = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
                 qtimg = QtGui.QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QtGui.QImage.Format_RGB888)
                 pix = QtGui.QPixmap.fromImage(qtimg)
                 self.preview.setPixmap(pix)
 
+                # operate on a smaller frame for detection/encoding
                 small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
                 rgb_small = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
-
                 locs = face_recognition.face_locations(rgb_small, model='hog')
                 if locs:
                     enc_small = face_recognition.face_encodings(rgb_small, locs)
                     if enc_small:
+                        # compute encoding on a larger frame for better accuracy
                         full_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         full_locs = face_recognition.face_locations(full_rgb, model='hog')
                         full_encs = face_recognition.face_encodings(full_rgb, full_locs)
@@ -235,7 +136,6 @@ class EnrollDialog(QtWidgets.QDialog):
                             captured += 1
                             pval = int((captured / target) * 100)
                             self.progress.setValue(pval)
-
                             thumb = center_crop_square(frame, 64)
                             thumb = cv2.cvtColor(thumb, cv2.COLOR_BGR2RGB)
                             q = QtGui.QImage(thumb.data, thumb.shape[1], thumb.shape[0], thumb.strides[0], QtGui.QImage.Format_RGB888)
@@ -243,22 +143,19 @@ class EnrollDialog(QtWidgets.QDialog):
                             lbl.setPixmap(QtGui.QPixmap.fromImage(q))
                             lbl.setFixedSize(68, 68)
                             self.thumb_strip.addWidget(lbl)
-                            time.sleep(0.25)
-
+                time.sleep(0.25)
                 QtWidgets.QApplication.processEvents()
         finally:
             try:
                 cap.release()
-            except Exception:
+            except:
                 pass
-
-        self.capture_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+            self.capture_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
 
         if not imgs:
             show_message(self, 'Failed', 'No face images captured. Improve lighting and face the camera.', QtWidgets.QMessageBox.Warning)
             return
-
         self.captured_images = imgs
         self.captured_encodings = encs
         show_message(self, 'Captured', f'Captured {len(imgs)} images.', QtWidgets.QMessageBox.Information)
@@ -267,7 +164,6 @@ class EnrollDialog(QtWidgets.QDialog):
         self._stop_flag = True
 
 
-# ---------- ManagementDialog ----------
 class ManagementDialog(QtWidgets.QDialog):
     def __init__(self, profile_store, parent=None):
         super().__init__(parent)
@@ -297,8 +193,8 @@ class ManagementDialog(QtWidgets.QDialog):
         h.addWidget(self.btn_delete)
         h.addWidget(self.btn_refresh)
         layout.addLayout(h)
-
         self.setLayout(layout)
+
         self.btn_create.clicked.connect(self.on_create)
         self.btn_delete.clicked.connect(self.on_delete)
         self.btn_refresh.clicked.connect(self.refresh_list)
@@ -354,7 +250,6 @@ class ManagementDialog(QtWidgets.QDialog):
             self.refresh_list()
 
 
-# ---------- Main window ----------
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, master_key):
         super().__init__()
@@ -365,8 +260,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self.encodings = self.store.load_encodings_all()
         self.camera_worker = CameraWorker(self.encodings, similarity_threshold=SIMILARITY_THRESHOLD)
 
-        # overlay: full-screen black pad
-        self.overlay = OverlayWindow()
+        # --- Overlay: robust initialization for a black/semi-transparent full-screen overlay ---
+        self.overlay = QtWidgets.QWidget(None)
+        # Keep always-on-top, frameless. Tool flag helps avoid taskbar entry on some platforms.
+        self.overlay.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.FramelessWindowHint | QtCore.Qt.Tool)
+        # Allow translucent background; necessary for RGBA backgrounds on many platforms.
+        self.overlay.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        # Fallback opacity in case RGBA stylesheet isn't honored on some systems.
+        self.overlay.setWindowOpacity(0.92)
+        # Use an explicit semi-transparent black stylesheet. RGBA works when WA_TranslucentBackground is True.
+        self.overlay.setStyleSheet('background-color: rgba(0, 0, 0, 220);')
+        # Optional: add a centered label to indicate "overlay active" so it looks intentional
+        ol_layout = QtWidgets.QVBoxLayout(self.overlay)
+        ol_layout.setContentsMargins(0, 0, 0, 0)
+        ol_layout.setAlignment(QtCore.Qt.AlignCenter)
+        ol_label = QtWidgets.QLabel('')
+        ol_label.setAlignment(QtCore.Qt.AlignCenter)
+        ol_label.setStyleSheet('color: white; font-size: 20px; padding: 20px;')
+        ol_layout.addWidget(ol_label)
+        self.overlay.hide()
+        # ---------------------------------------------------------------------------------------
 
         self._monitoring = False
         self.init_ui()
@@ -376,6 +289,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def init_ui(self):
         central = QtWidgets.QWidget()
         main_layout = QtWidgets.QHBoxLayout()
+
         left = QtWidgets.QVBoxLayout()
         card = QtWidgets.QFrame()
         card.setObjectName('card')
@@ -393,8 +307,10 @@ class MainWindow(QtWidgets.QMainWindow):
         controls.addWidget(self.admin_panel_btn)
         card_layout.addLayout(controls)
 
-        # camera preview (use VideoLabel)
-        self.video_label = VideoLabel(720, 480)
+        # camera preview
+        self.video_label = QtWidgets.QLabel()
+        self.video_label.setFixedSize(720, 480)
+        self.video_label.setStyleSheet('background:#0f0f0f; border-radius:12px;')
         card_layout.addWidget(self.video_label, alignment=QtCore.Qt.AlignCenter)
 
         # status row
@@ -423,6 +339,7 @@ class MainWindow(QtWidgets.QMainWindow):
         rlay.addWidget(self.admin_scroll)
         rlay.addSpacing(6)
         rlay.addWidget(QtWidgets.QLabel('Settings'))
+
         from PyQt5.QtWidgets import QDoubleSpinBox
         self.threshold_spin = QDoubleSpinBox()
         self.threshold_spin.setRange(0.80, 0.999)
@@ -430,6 +347,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.threshold_spin.setValue(SIMILARITY_THRESHOLD)
         rlay.addWidget(QtWidgets.QLabel('Similarity threshold:'))
         rlay.addWidget(self.threshold_spin)
+
         self.capture_count_spin = QtWidgets.QSpinBox()
         self.capture_count_spin.setRange(3, 60)
         self.capture_count_spin.setValue(DEFAULT_CAPTURE_COUNT)
@@ -495,29 +413,34 @@ class MainWindow(QtWidgets.QMainWindow):
                 item.setIcon(QtGui.QIcon(QtGui.QPixmap.fromImage(q)))
             self.admin_scroll.addItem(item)
 
-    # Defensive start/stop helpers (support both API names)
-    def _start_camera_worker(self):
-        # try common method names
-        for name in ("start_worker", "start", "run"):
-            fn = getattr(self.camera_worker, name, None)
-            if callable(fn):
-                try:
-                    fn()
-                    return True
-                except Exception:
-                    continue
-        return False
+    def _show_overlay(self):
+        """Show a full-screen semi-transparent black overlay.
+        This method uses both RGBA stylesheet (requires WA_TranslucentBackground) and a
+        fallback to window opacity to increase compatibility across platforms.
+        """
+        try:
+            # Try RGBA + translucent attribute first
+            self.overlay.setStyleSheet('background-color: rgba(0, 0, 0, 220);')
+            self.overlay.setWindowOpacity(0.92)
+            self.overlay.showFullScreen()
+            self.overlay.raise_()
+            # On some systems, forcing an update helps
+            self.overlay.update()
+        except Exception:
+            try:
+                # Fallback: opaque black with high opacity
+                self.overlay.setStyleSheet('background-color: black;')
+                self.overlay.setWindowOpacity(0.92)
+                self.overlay.showFullScreen()
+                self.overlay.raise_()
+            except:
+                pass
 
-    def _stop_camera_worker(self):
-        for name in ("stop_worker", "stop"):
-            fn = getattr(self.camera_worker, name, None)
-            if callable(fn):
-                try:
-                    fn()
-                    return True
-                except Exception:
-                    continue
-        return False
+    def _hide_overlay(self):
+        try:
+            self.overlay.hide()
+        except:
+            pass
 
     def on_start(self):
         if self._monitoring:
@@ -529,13 +452,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.encodings = self.store.load_encodings_all()
         self.camera_worker.update_encodings(self.encodings)
         self.camera_worker.similarity_threshold = float(self.threshold_spin.value())
-        ok = self._start_camera_worker()
-        if not ok:
-            show_message(self, 'Error', 'Failed to start camera worker.', QtWidgets.QMessageBox.Warning)
-            self._monitoring = False
-            self.start_btn.setEnabled(True)
-            self.stop_btn.setEnabled(False)
-            return
+        # camera_worker uses QThread methods
+        self.camera_worker.start_worker()
         self.status_chip.setText('Monitoring — looking for admins')
 
     def on_stop(self):
@@ -546,12 +464,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_btn.setEnabled(False)
         self.status_chip.setText('Stopped')
         try:
-            self._stop_camera_worker()
-        except Exception:
+            self.camera_worker.stop_worker()
+        except:
             pass
         try:
-            self.overlay.unlock()
-        except Exception:
+            self._hide_overlay()
+        except:
             pass
 
     def on_admin_panel(self):
@@ -562,7 +480,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if not pw:
             show_message(self, 'Denied', 'Empty password.', QtWidgets.QMessageBox.Warning)
             return
-
         with open(SETTINGS_FILE, 'r') as f:
             settings = json.load(f)
         salt = base64.b64decode(settings['master_salt'].encode('utf-8'))
@@ -570,7 +487,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if derived != self.master_key:
             show_message(self, 'Denied', 'Wrong master password.', QtWidgets.QMessageBox.Warning)
             return
-
         dlg2 = ManagementDialog(self.store, self)
         dlg2.exec_()
         self.refresh_admin_list()
@@ -592,7 +508,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if not ret:
             show_message(self, 'Camera', 'Failed to capture.', QtWidgets.QMessageBox.Warning)
             return
-
         small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
         rgb_small = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
         locs = face_recognition.face_locations(rgb_small, model='hog')
@@ -603,7 +518,6 @@ class MainWindow(QtWidgets.QMainWindow):
         if not encs:
             show_message(self, 'No encoding', 'Failed to compute encoding.', QtWidgets.QMessageBox.Information)
             return
-
         enc = encs[0]
         best_user, best_sim = None, -1.0
         for user, knowns in self.encodings.items():
@@ -612,52 +526,48 @@ class MainWindow(QtWidgets.QMainWindow):
                 if sim > best_sim:
                     best_sim = sim
                     best_user = user
-
         show_message(self, 'Test Result', f'Best: {best_user} (sim={best_sim:.4f})\nThreshold={self.threshold_spin.value():.3f}', QtWidgets.QMessageBox.Information)
 
     def on_threshold_changed(self, v):
         self.threshold_label.setText(f'Threshold: {v:.3f}')
 
     def on_frame(self, frame):
-        # frame is BGR OpenCV frame (or None)
         try:
-            if frame is None:
-                self.video_label.update_frame(None)
-            else:
-                self.video_label.update_frame(frame)
+            disp = cv2.resize(frame, (720, 480))
+            rgb = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
+            qtimg = QtGui.QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QtGui.QImage.Format_RGB888)
+            pix = QtGui.QPixmap.fromImage(qtimg)
+            self.video_label.setPixmap(pix)
         except Exception:
-            # ensure UI doesn't crash
-            try:
-                self.video_label.update_frame(None)
-            except Exception:
-                pass
+            # avoid crashing UI rendering on unexpected frame data
+            pass
 
     def on_recognized(self, username):
         self.status_chip.setText(f'Recognized: {username}')
         try:
-            self.overlay.unlock()
-        except Exception:
+            self._hide_overlay()
+        except:
             pass
 
     def on_not_recognized(self):
         self.status_chip.setText('Unknown person — overlay active')
         if self._monitoring:
             try:
-                self.overlay.lock()
-            except Exception:
+                self._show_overlay()
+            except:
                 pass
 
     def on_no_face(self):
         self.status_chip.setText('No face — overlay active')
         if self._monitoring:
             try:
-                self.overlay.lock()
-            except Exception:
+                self._show_overlay()
+            except:
                 pass
 
     def closeEvent(self, event):
         try:
-            self._stop_camera_worker()
-        except Exception:
+            self.camera_worker.stop_worker()
+        except:
             pass
         event.accept()
