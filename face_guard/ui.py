@@ -5,6 +5,7 @@ import numpy as np
 import time
 import json
 import base64
+import traceback
 
 import face_recognition
 
@@ -21,18 +22,114 @@ DEFAULT_CAPTURE_COUNT = 8
 CAPTURE_TIMEOUT = 60
 
 
-# Helper to show styled message boxes so text is visible on dark/light themes
+# ----------------- Helpers -----------------
 def show_message(parent, title: str, text: str, icon=QtWidgets.QMessageBox.Information):
+    """
+    Message box helper that forces a readable style (white background, black text)
+    so messages are visible regardless of the app-wide stylesheet.
+    """
     msg = QtWidgets.QMessageBox(parent)
     msg.setIcon(icon)
     msg.setWindowTitle(title)
     msg.setText(text)
-    # Force label text color to black so it's visible on light backgrounds (and consistent)
-    # Keep only styling for QLabel so other controls aren't impacted.
-    msg.setStyleSheet("QLabel{ color: black; }")
+    msg.setStyleSheet(
+        "QMessageBox { background-color: white; }"
+        "QLabel { color: black; font-size: 12px; }"
+        "QPushButton { min-width: 80px; padding: 6px; }"
+    )
     msg.exec_()
 
 
+# ---------- Overlay window (full-screen black pad) ----------
+class OverlayWindow(QtWidgets.QWidget):
+    """
+    Full-screen black overlay used to block the screen when no face / unknown.
+    Use: overlay.lock() to show, overlay.unlock() to hide.
+    """
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowFlags(
+            QtCore.Qt.WindowStaysOnTopHint
+            | QtCore.Qt.FramelessWindowHint
+            | QtCore.Qt.Tool
+        )
+        # Allow opaque black background
+        self.setAttribute(QtCore.Qt.WA_TranslucentBackground, True)
+        # Fully opaque black background
+        self.setStyleSheet("background-color: rgba(0, 0, 0, 1);")
+        # Prevent mouse events from passing through if you want to block input.
+        # If you prefer clicks to pass to underlying windows, set True.
+        self.setAttribute(QtCore.Qt.WA_TransparentForMouseEvents, False)
+        self.hide()
+
+    def lock(self):
+        """Show full-screen black overlay and raise it above other windows."""
+        try:
+            screen = QtWidgets.QApplication.primaryScreen()
+            if screen is not None:
+                geo = screen.geometry()
+                self.setGeometry(geo)
+            else:
+                # fallback
+                self.showFullScreen()
+            self.show()
+            self.raise_()
+            # ensure painted
+            QtWidgets.QApplication.processEvents()
+        except Exception:
+            # fallback show attempt
+            try:
+                self.showFullScreen()
+                QtWidgets.QApplication.processEvents()
+            except Exception:
+                traceback.print_exc()
+
+    def unlock(self):
+        """Hide overlay."""
+        try:
+            self.hide()
+            QtWidgets.QApplication.processEvents()
+        except Exception:
+            try:
+                self.close()
+            except Exception:
+                pass
+
+
+# ---------- Video preview label ----------
+class VideoLabel(QtWidgets.QLabel):
+    """QLabel extension that always shows a black background if frame missing."""
+    def __init__(self, width=720, height=480, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(width, height)
+        self.setStyleSheet("background-color: black; border-radius:12px;")
+        self.setAlignment(QtCore.Qt.AlignCenter)
+
+    def update_frame(self, frame):
+        """Accepts BGR OpenCV frame or None. Renders a black frame when frame is None."""
+        try:
+            if frame is None:
+                black = np.zeros((self.height(), self.width(), 3), dtype=np.uint8)
+                pix = self._to_pixmap(black)
+            else:
+                # ensure frame fits into preview size while preserving aspect ratio
+                disp = cv2.resize(frame, (self.width(), self.height()))
+                pix = self._to_pixmap(disp)
+            self.setPixmap(pix)
+        except Exception:
+            # if convert fails, set black
+            black = np.zeros((self.height(), self.width(), 3), dtype=np.uint8)
+            self.setPixmap(self._to_pixmap(black))
+
+    def _to_pixmap(self, bgr_frame):
+        rgb = cv2.cvtColor(bgr_frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = rgb.shape
+        bytes_per_line = ch * w
+        qimg = QtGui.QImage(rgb.data, w, h, bytes_per_line, QtGui.QImage.Format_RGB888)
+        return QtGui.QPixmap.fromImage(qimg)
+
+
+# ---------- EnrollDialog ----------
 class EnrollDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -122,16 +219,13 @@ class EnrollDialog(QtWidgets.QDialog):
                 pix = QtGui.QPixmap.fromImage(qtimg)
                 self.preview.setPixmap(pix)
 
-                # operate on a smaller frame for detection/encoding
                 small = cv2.resize(frame, (0, 0), fx=0.5, fy=0.5)
                 rgb_small = cv2.cvtColor(small, cv2.COLOR_BGR2RGB)
 
-                # face_recognition is imported at module top
                 locs = face_recognition.face_locations(rgb_small, model='hog')
                 if locs:
                     enc_small = face_recognition.face_encodings(rgb_small, locs)
                     if enc_small:
-                        # compute encoding on a larger frame for better accuracy
                         full_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         full_locs = face_recognition.face_locations(full_rgb, model='hog')
                         full_encs = face_recognition.face_encodings(full_rgb, full_locs)
@@ -155,7 +249,7 @@ class EnrollDialog(QtWidgets.QDialog):
         finally:
             try:
                 cap.release()
-            except:
+            except Exception:
                 pass
 
         self.capture_btn.setEnabled(True)
@@ -173,6 +267,7 @@ class EnrollDialog(QtWidgets.QDialog):
         self._stop_flag = True
 
 
+# ---------- ManagementDialog ----------
 class ManagementDialog(QtWidgets.QDialog):
     def __init__(self, profile_store, parent=None):
         super().__init__(parent)
@@ -259,6 +354,7 @@ class ManagementDialog(QtWidgets.QDialog):
             self.refresh_list()
 
 
+# ---------- Main window ----------
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self, master_key):
         super().__init__()
@@ -268,12 +364,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.store = ProfileStore(master_key)
         self.encodings = self.store.load_encodings_all()
         self.camera_worker = CameraWorker(self.encodings, similarity_threshold=SIMILARITY_THRESHOLD)
-        # simple overlay widget
-        self.overlay = QtWidgets.QWidget()
-        self.overlay.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint | QtCore.Qt.FramelessWindowHint | QtCore.Qt.Tool)
-        self.overlay.setAttribute(QtCore.Qt.WA_TranslucentBackground, True) 
-        self.overlay.setStyleSheet("background-color: rgba(0, 0, 0, 255);")
-        self.overlay.hide()
+
+        # overlay: full-screen black pad
+        self.overlay = OverlayWindow()
+
         self._monitoring = False
         self.init_ui()
         self.setup_signals()
@@ -299,10 +393,8 @@ class MainWindow(QtWidgets.QMainWindow):
         controls.addWidget(self.admin_panel_btn)
         card_layout.addLayout(controls)
 
-        # camera preview
-        self.video_label = QtWidgets.QLabel()
-        self.video_label.setFixedSize(720, 480)
-        self.video_label.setStyleSheet('background:#0f0f0f; border-radius:12px;')
+        # camera preview (use VideoLabel)
+        self.video_label = VideoLabel(720, 480)
         card_layout.addWidget(self.video_label, alignment=QtCore.Qt.AlignCenter)
 
         # status row
@@ -403,6 +495,30 @@ class MainWindow(QtWidgets.QMainWindow):
                 item.setIcon(QtGui.QIcon(QtGui.QPixmap.fromImage(q)))
             self.admin_scroll.addItem(item)
 
+    # Defensive start/stop helpers (support both API names)
+    def _start_camera_worker(self):
+        # try common method names
+        for name in ("start_worker", "start", "run"):
+            fn = getattr(self.camera_worker, name, None)
+            if callable(fn):
+                try:
+                    fn()
+                    return True
+                except Exception:
+                    continue
+        return False
+
+    def _stop_camera_worker(self):
+        for name in ("stop_worker", "stop"):
+            fn = getattr(self.camera_worker, name, None)
+            if callable(fn):
+                try:
+                    fn()
+                    return True
+                except Exception:
+                    continue
+        return False
+
     def on_start(self):
         if self._monitoring:
             return
@@ -413,8 +529,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.encodings = self.store.load_encodings_all()
         self.camera_worker.update_encodings(self.encodings)
         self.camera_worker.similarity_threshold = float(self.threshold_spin.value())
-        # camera_worker uses QThread methods
-        self.camera_worker.start_worker()
+        ok = self._start_camera_worker()
+        if not ok:
+            show_message(self, 'Error', 'Failed to start camera worker.', QtWidgets.QMessageBox.Warning)
+            self._monitoring = False
+            self.start_btn.setEnabled(True)
+            self.stop_btn.setEnabled(False)
+            return
         self.status_chip.setText('Monitoring — looking for admins')
 
     def on_stop(self):
@@ -425,12 +546,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.stop_btn.setEnabled(False)
         self.status_chip.setText('Stopped')
         try:
-            self.camera_worker.stop_worker()
-        except:
+            self._stop_camera_worker()
+        except Exception:
             pass
         try:
-            self.overlay.hide()
-        except:
+            self.overlay.unlock()
+        except Exception:
             pass
 
     def on_admin_panel(self):
@@ -450,7 +571,6 @@ class MainWindow(QtWidgets.QMainWindow):
             show_message(self, 'Denied', 'Wrong master password.', QtWidgets.QMessageBox.Warning)
             return
 
-        # ManagementDialog is defined in this module; instantiate directly
         dlg2 = ManagementDialog(self.store, self)
         dlg2.exec_()
         self.refresh_admin_list()
@@ -493,50 +613,51 @@ class MainWindow(QtWidgets.QMainWindow):
                     best_sim = sim
                     best_user = user
 
-        show_message(self, 'Test Result', f'Best: {best_user} (sim={best_sim:.4f})\\nThreshold={self.threshold_spin.value():.3f}', QtWidgets.QMessageBox.Information)
+        show_message(self, 'Test Result', f'Best: {best_user} (sim={best_sim:.4f})\nThreshold={self.threshold_spin.value():.3f}', QtWidgets.QMessageBox.Information)
 
     def on_threshold_changed(self, v):
         self.threshold_label.setText(f'Threshold: {v:.3f}')
 
     def on_frame(self, frame):
+        # frame is BGR OpenCV frame (or None)
         try:
-            disp = cv2.resize(frame, (720, 480))
-            rgb = cv2.cvtColor(disp, cv2.COLOR_BGR2RGB)
-            qtimg = QtGui.QImage(rgb.data, rgb.shape[1], rgb.shape[0], rgb.strides[0], QtGui.QImage.Format_RGB888)
-            pix = QtGui.QPixmap.fromImage(qtimg)
-            self.video_label.setPixmap(pix)
+            if frame is None:
+                self.video_label.update_frame(None)
+            else:
+                self.video_label.update_frame(frame)
         except Exception:
-            # avoid crashing UI rendering on unexpected frame data
-            pass
+            # ensure UI doesn't crash
+            try:
+                self.video_label.update_frame(None)
+            except Exception:
+                pass
 
     def on_recognized(self, username):
         self.status_chip.setText(f'Recognized: {username}')
         try:
-            self.overlay.hide()
-        except:
+            self.overlay.unlock()
+        except Exception:
             pass
 
     def on_not_recognized(self):
         self.status_chip.setText('Unknown person — overlay active')
         if self._monitoring:
             try:
-                self.overlay.showFullScreen()
-                self.overlay.raise_()
-            except:
+                self.overlay.lock()
+            except Exception:
                 pass
 
     def on_no_face(self):
         self.status_chip.setText('No face — overlay active')
         if self._monitoring:
             try:
-                self.overlay.showFullScreen()
-                self.overlay.raise_()
-            except:
+                self.overlay.lock()
+            except Exception:
                 pass
 
     def closeEvent(self, event):
         try:
-            self.camera_worker.stop_worker()
-        except:
+            self._stop_camera_worker()
+        except Exception:
             pass
         event.accept()
