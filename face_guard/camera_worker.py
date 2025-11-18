@@ -189,7 +189,6 @@ class CameraWorker(QtCore.QThread):
                         rgb_small, model='hog')
 
                     if len(face_locs) == 0:
-                        # هیچ صورتی پیدا نشد - حالت را به SEARCHING برگردان
                         if self._liveness_state != "SEARCHING":
                             self._reset_liveness_state()
                         
@@ -198,18 +197,16 @@ class CameraWorker(QtCore.QThread):
                         time.sleep(0.08)
                         continue
                     
-                    # اگر صورت پیدا شد، ابتدا آن را در کادر بکشید
                     top, right, bottom, left = [c * 2 for c in face_locs[0]]
                     
-                    # رنگ کادر بر اساس حالت
                     if self._liveness_state == "AUTHENTICATED":
-                        box_color = (0, 255, 0)  # سبز - تایید شده
+                        box_color = (0, 255, 0)
                         status_text = "AUTHENTICATED"
                     elif self._liveness_state == "CHECKING_LIVENESS":
-                        box_color = (255, 165, 0)  # نارنجی - در حال بررسی
+                        box_color = (255, 165, 0)
                         status_text = "CHECKING LIVENESS..."
                     else:
-                        box_color = (255, 0, 0)  # قرمز - در حال جستجو
+                        box_color = (255, 0, 0)
                         status_text = "SEARCHING"
                     
                     cv2.rectangle(frame, (left, top), (right, bottom), box_color, 2)
@@ -250,7 +247,6 @@ class CameraWorker(QtCore.QThread):
                                     found_user = best_user
 
                         if found_user:
-                            # کاربر شناسایی شد، حالا به مرحله چک زنده بودن بروید
                             # print(f"Identity matched: {found_user}. Starting Liveness Check...")
                             self._liveness_state = "CHECKING_LIVENESS"
                             self._candidate_user = found_user
