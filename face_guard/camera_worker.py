@@ -264,7 +264,7 @@ class CameraWorker(QtCore.QThread):
                     elif self._liveness_state == "CHECKING_LIVENESS":
                         # Check for timeout
                         if time.time() - self._liveness_timer_start > self.LIVENESS_TIMEOUT:
-                            print("Liveness Check Timed Out.")
+                            # print("Liveness Check Timed Out.")
                             self.not_recognized.emit()
                             self._reset_liveness_state()
                         else:
@@ -289,7 +289,7 @@ class CameraWorker(QtCore.QThread):
                                     self._consec_frames_closed += 1
                                 else:
                                     if self._consec_frames_closed >= self.EYE_AR_CONSEC_FRAMES:
-                                        print("✓ Blink Detected! Liveness Confirmed.")
+                                        # print("✓ Blink Detected! Liveness Confirmed.")
                                         liveness_passed = True
                                     self._consec_frames_closed = 0
 
@@ -301,7 +301,7 @@ class CameraWorker(QtCore.QThread):
                                     if mar > self.MOUTH_AR_THRESH:
                                         self._consec_frames_mouth_open += 1
                                         if self._consec_frames_mouth_open >= self.MOUTH_AR_CONSEC_FRAMES:
-                                            print("✓ Mouth Movement Detected! Liveness Confirmed.")
+                                            # print("✓ Mouth Movement Detected! Liveness Confirmed.")
                                             liveness_passed = True
                                     else:
                                         self._consec_frames_mouth_open = 0
