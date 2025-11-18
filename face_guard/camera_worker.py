@@ -5,7 +5,6 @@ import time
 import traceback
 import face_recognition
 
-
 class CameraWorker(QtCore.QThread):
     recognized = QtCore.pyqtSignal(str)
     not_recognized = QtCore.pyqtSignal()
