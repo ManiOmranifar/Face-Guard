@@ -156,7 +156,7 @@ pytest -q
 ---
 
 ## License
-This project includes an MIT license (`LICENSE` file). You are free to reuse and modify the code.
+This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
 ---
 
