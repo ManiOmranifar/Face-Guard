@@ -493,7 +493,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     best_sim = sim
                     best_user = user
 
-        show_message(self, 'Test Result', f'Best: {best_user} (sim={best_sim:.4f})\\nThreshold={self.threshold_spin.value():.3f}', QtWidgets.QMessageBox.Information)
+        show_message(self, 'Test Result', f'Best: {best_user} (sim={best_sim:.4f})\nThreshold={self.threshold_spin.value():.3f}', QtWidgets.QMessageBox.Information)
 
     def on_threshold_changed(self, v):
         self.threshold_label.setText(f'Threshold: {v:.3f}')
