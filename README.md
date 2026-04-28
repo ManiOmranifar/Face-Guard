@@ -1,4 +1,8 @@
 # Face Guard — Production-oriented Desktop App (Exercise)
+
+**Face Guard** is a refactored, production-oriented educational desktop application for local face recognition-based access control.  
+This repository is designed to be dropped into a GitHub repo and iterated on. It focuses on safer local storage, better threading, improved performance, packaging friendliness, and developer ergonomics.
+
 ---
 
 ## Table of Contents
