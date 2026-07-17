@@ -20,8 +20,6 @@ SIMILARITY_THRESHOLD = 0.98
 DEFAULT_CAPTURE_COUNT = 8
 CAPTURE_TIMEOUT = 60
 
-
-# Helper to show styled message boxes so text is visible on dark/light themes
 def show_message(parent, title: str, text: str, icon=QtWidgets.QMessageBox.Information):
     msg = QtWidgets.QMessageBox(parent)
     msg.setIcon(icon)
